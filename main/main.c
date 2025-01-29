@@ -85,6 +85,8 @@ void app_main(void)
             printf("Success\n");
         }
         printf("GYRO_XOUT_H: %d\n", byteRead[0]);
+        uint16_t gyroscope_data = 0;
+        gyroscope_data = (((uint16_t)byteRead[0]) << 8);
 
         const uint8_t regAdr2[1] = {0x44};  // GYRO_XOUT_L register address (low byte of X-axis gyroscope)
 
@@ -95,6 +97,8 @@ void app_main(void)
             printf("Success\n");
         }
         printf("GYRO_XOUT_L: %d\n", byteRead[0]);
+        gyroscope_data |= ((uint16_t) byteRead[0]);
+        printf("Gyroscope data: %d\n", gyroscope_data);
 
         vTaskDelay(10 / portTICK_PERIOD_MS);  // Short delay before next iteration
     }
