@@ -6,6 +6,7 @@
 #include "driver/i2c_master.h"
 #include "mpu6050.h"
 
+// Define constants
 #define X_LSB 0
 #define X_MSB 1
 #define Y_LSB 2
@@ -14,7 +15,8 @@
 #define Z_MSB 5
 
 #define GYRO_SCALING_FACTOR 131 // For ±250dps (FS_SEL=0)
-// Define I2C port and GPIO pins for SDA and SCL
+#define ACCEL_SCALING_FACTOR 16384.0 // For ±2g (AFS_SEL=0)
+
 #define TEST_I2C_PORT I2C_NUM_0
 #define I2C_MASTER_SCL_IO 7  // SCL pin (set based on your configuration)
 #define I2C_MASTER_SDA_IO 6  // SDA pin (set based on your configuration)
@@ -46,12 +48,7 @@ i2c_device_config_t dev_cfg = {
 // Handle for the MPU-6050 device
 i2c_master_dev_handle_t dev_handle;
 
-void app_main(void)
-{
-    // Initialize the I2C master bus and add the MPU-6050 device to it
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &dev_handle));
-
+void initialize_mpu6050() {
     const uint8_t PWR_MGMT_1_REG[1] = {0x6B};  // Power management register address
 
     // Transmit the register address to read its contents
@@ -86,48 +83,80 @@ void app_main(void)
         printf("Failed to transmit on i2c\n");
     }
     printf("Address %u\n", byteRead[0]);
+}
 
+void read_gyroscope_data(int16_t *gyro_x, int16_t *gyro_y, int16_t *gyro_z) {
+    uint8_t gyroscopeData[6]; //x_lsb is 0, y_lsb is 2, z_lsb is 4
 
-    for (;;)
-    {
-        
-        /* 2 byte to hold x_gyroscope_data */
-        uint8_t gyroscopeData[6]; //x_lsb is 0, y_lsb is 2, z_lsb is 4
+    // Define register addresses for gyroscope data
+    uint8_t gyro_reg_addresses[6] = {
+        MPU6050_RA_GYRO_XOUT_L,
+        MPU6050_RA_GYRO_XOUT_H,
+        MPU6050_RA_GYRO_YOUT_L,
+        MPU6050_RA_GYRO_YOUT_H,
+        MPU6050_RA_GYRO_ZOUT_L,
+        MPU6050_RA_GYRO_ZOUT_H
+    };
 
-
-        // Define register addresses for gyroscope data
-        uint8_t gyro_reg_addresses[6] = {
-            MPU6050_RA_GYRO_XOUT_L,
-            MPU6050_RA_GYRO_XOUT_H,
-            MPU6050_RA_GYRO_YOUT_L,
-            MPU6050_RA_GYRO_YOUT_H,
-            MPU6050_RA_GYRO_ZOUT_L,
-            MPU6050_RA_GYRO_ZOUT_H
-        };
-
-        // Read gyroscope data for all axes
-        for (int i = 0; i < 6; i++) {
-            if (i2c_master_transmit_receive(dev_handle, &gyro_reg_addresses[i], 1, &gyroscopeData[i], 1, 100) != ESP_OK) {
+    // Read gyroscope data for all axes
+    for (int i = 0; i < 6; i++) {
+        if (i2c_master_transmit_receive(dev_handle, &gyro_reg_addresses[i], 1, &gyroscopeData[i], 1, 100) != ESP_OK) {
             printf("Failed to transmit on i2c\n");
-            }
         }
+    }
 
-        
+    *gyro_x = (int16_t)((gyroscopeData[1] << 8) | gyroscopeData[0]);
+    *gyro_y = (int16_t)((gyroscopeData[3] << 8) | gyroscopeData[2]);
+    *gyro_z = (int16_t)((gyroscopeData[5] << 8) | gyroscopeData[4]);
+}
 
-        // Replace uint16_t with int16_t for signed data
-        int16_t gyroscope_x_raw = (int16_t)((gyroscopeData[1] << 8) | gyroscopeData[0]);
-        int16_t gyroscope_y_raw = (int16_t)((gyroscopeData[3] << 8) | gyroscopeData[2]);
-        int16_t gyroscope_z_raw = (int16_t)((gyroscopeData[5] << 8) | gyroscopeData[4]);
+void read_accelerometer_data(int16_t *accel_x, int16_t *accel_y, int16_t *accel_z) {
+    uint8_t accelData[6]; // Stores X/Y/Z high/low bytes
 
-        // Apply calibration offsets (see calibration steps below)
- 
+    uint8_t accel_reg_addresses[6] = {
+        MPU6050_RA_ACCEL_XOUT_L, MPU6050_RA_ACCEL_XOUT_H,
+        MPU6050_RA_ACCEL_YOUT_L, MPU6050_RA_ACCEL_YOUT_H,
+        MPU6050_RA_ACCEL_ZOUT_L, MPU6050_RA_ACCEL_ZOUT_H
+    };
+
+    // Read all 6 accelerometer registers
+    for (int i = 0; i < 6; i++) {
+        i2c_master_transmit_receive(dev_handle, &accel_reg_addresses[i], 1, &accelData[i], 1, 100);
+    }
+
+    *accel_x = (int16_t)((accelData[1] << 8) | accelData[0]);
+    *accel_y = (int16_t)((accelData[3] << 8) | accelData[2]);
+    *accel_z = (int16_t)((accelData[5] << 8) | accelData[4]);
+}
+
+void app_main(void) {
+    // Initialize the I2C master bus and add the MPU-6050 device to it
+    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &dev_handle));
+
+    initialize_mpu6050();
+
+    for (;;) {
+        int16_t accel_x_raw, accel_y_raw, accel_z_raw;
+        int16_t gyroscope_x_raw, gyroscope_y_raw, gyroscope_z_raw;
+
+        read_accelerometer_data(&accel_x_raw, &accel_y_raw, &accel_z_raw);
+        read_gyroscope_data(&gyroscope_x_raw, &gyroscope_y_raw, &gyroscope_z_raw);
+
+        // Convert to g-force
+        float accel_x = accel_x_raw / ACCEL_SCALING_FACTOR;
+        float accel_y = accel_y_raw / ACCEL_SCALING_FACTOR;
+        float accel_z = accel_z_raw / ACCEL_SCALING_FACTOR;
+
+        // Print accelerometer data
+        printf("Acceleration (m/s²): X=%.2f, Y=%.2f, Z=%.2f\n", accel_x, accel_y, accel_z);
 
         // Use correct scaling factor based on FS_SEL
         float gyro_x = gyroscope_x_raw / GYRO_SCALING_FACTOR;
         float gyro_y = gyroscope_y_raw / GYRO_SCALING_FACTOR;
         float gyro_z = gyroscope_z_raw / GYRO_SCALING_FACTOR;
 
-        /* Do offsetsfrom float*/
+        // Apply calibration offsets
         gyro_x += GYRO_X_CALIBRATION;
         gyro_y += GYRO_Y_CALIBRATION;
         gyro_z += GYRO_Z_CALIBRATION;
@@ -136,6 +165,5 @@ void app_main(void)
         printf("Gyroscope data (dps): X = %.2f, Y = %.2f, Z = %.2f\n", gyro_x, gyro_y, gyro_z);
 
         vTaskDelay(100 / portTICK_PERIOD_MS);  // Short delay before next iteration
-
     }
 }
