@@ -171,19 +171,19 @@ void app_main(void) {
     
     // Initialize the I2C master bus and add the MPU-6050 device to it
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
-    // ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &MPU_6050_dev_cfg, &MPU_6050_dev_handle));
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &MPU_6050_dev_cfg, &MPU_6050_dev_handle));
     
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &MAX30102_dev_cfg, &MAX30102_dev_handle));
     
-    // initialize_mpu6050();
+    initialize_mpu6050();
     initialize_MAXIM30102();
     
     for (;;) {
         int16_t accel_x_raw, accel_y_raw, accel_z_raw;
         int16_t gyroscope_x_raw, gyroscope_y_raw, gyroscope_z_raw;
         
-        // read_accelerometer_data(&accel_x_raw, &accel_y_raw, &accel_z_raw);
-        // read_gyroscope_data(&gyroscope_x_raw, &gyroscope_y_raw, &gyroscope_z_raw);
+        read_accelerometer_data(&accel_x_raw, &accel_y_raw, &accel_z_raw);
+        read_gyroscope_data(&gyroscope_x_raw, &gyroscope_y_raw, &gyroscope_z_raw);
         
         // Convert to g-force
         float accel_x = accel_x_raw / ACCEL_SCALING_FACTOR;
@@ -191,7 +191,7 @@ void app_main(void) {
         float accel_z = accel_z_raw / ACCEL_SCALING_FACTOR;
         
         // Print accelerometer data
-        // printf("Acceleration (m/s²): X=%.2f, Y=%.2f, Z=%.2f\n", accel_x, accel_y, accel_z);
+        printf("Acceleration (m/s²): X=%.2f, Y=%.2f, Z=%.2f\n", accel_x, accel_y, accel_z);
         
         // Use correct scaling factor based on FS_SEL
         float gyro_x = gyroscope_x_raw / GYRO_SCALING_FACTOR;
@@ -204,7 +204,7 @@ void app_main(void) {
         gyro_z += GYRO_Z_CALIBRATION;
         
         // Print gyroscope data
-        // printf("Gyroscope data (dps): X = %.2f, Y = %.2f, Z = %.2f\n", gyro_x, gyro_y, gyro_z);
+        printf("Gyroscope data (dps): X = %.2f, Y = %.2f, Z = %.2f\n", gyro_x, gyro_y, gyro_z);
         
         // Step 1: Write the FIFO_DATA register address (0x07) to the MAX30102
         uint8_t FIFO_REG_ADDR = 0x07;
