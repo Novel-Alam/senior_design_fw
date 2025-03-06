@@ -1,38 +1,4 @@
-#include <stdio.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_system.h"
-#include "spi_flash_mmap.h"  // Updated as per deprecation warning
-#include "driver/i2c_master.h"
-#include "mpu6050.h"
-#include "esp_systick_etm.h"
-#include "esp_timer.h"
-// #include "esp_systick_etm.h"
-
-// Define constants
-#define X_LSB 0
-#define X_MSB 1
-#define Y_LSB 2
-#define Y_MSB 3
-#define Z_LSB 4
-#define Z_MSB 5
-
-#define GYRO_SCALING_FACTOR 131 // For ±250dps (FS_SEL=0)
-#define ACCEL_SCALING_FACTOR 16384.0 // For ±2g (AFS_SEL=0)
-
-#define TEST_I2C_PORT I2C_NUM_0
-#define I2C_MASTER_SCL_IO 7  // SCL pin (set based on your configuration)
-#define I2C_MASTER_SDA_IO 6  // SDA pin (set based on your configuration)
-
-#define GYRO_X_CALIBRATION 1.0
-#define GYRO_Y_CALIBRATION -1.0
-#define GYRO_Z_CALIBRATION 0.0
-
-#define MAX30102_FIFO_SAMPLE_SIZE 6 // 6 Bytes Per "Sample" (Red[0:2]_IR[3:5])
-#define MAX30102_FIFO_BURST_SIZE 16 // 16 Samples
-#define BUFFER_SIZE 100  // Store 100 samples for BPM calculation
-#define HB_THRESHOLD 2500
-#define FILTER_ALPHA 0.5 // Adjust for responsiveness (0.1–0.5)
+#include "main.h"
 
 
 // Configure the I2C master bus
@@ -83,37 +49,52 @@ void update_filtered_ir(uint32_t raw_ir) {
     last_value = filtered_ir;
 }
 
+// void update_filtered_ir(uint32_t raw_ir) {
+//     static float last_baseline = 0;
+//     static float last_filtered = 0;
+    
+//     // 1. Remove baseline drift (high-pass)
+//     float baseline_ir = BANDPASS_BETA * raw_ir + (1 - BANDPASS_BETA) * last_baseline;
+//     float high_passed = raw_ir - baseline_ir;
+//     last_baseline = baseline_ir;
+    
+//     // 2. Attenuate high-frequency noise (low-pass)
+//     float filtered_ir = FILTER_ALPHA * high_passed + (1 - FILTER_ALPHA) * last_filtered;
+//     last_filtered = filtered_ir;
+// }
+
 void update_thresholds(float filtered_ir) {
     // Track min/max with exponential decay
-    signal_min = 0.99 * signal_min + 0.01 * filtered_ir;
-    signal_max = 0.99 * signal_max + 0.01 * filtered_ir;
-    threshold = signal_min + (signal_max - signal_min) * 0.5; // Midpoint
+    signal_min = 0.95 * signal_min + 0.05 * filtered_ir;
+    signal_max = 0.95 * signal_max + 0.05 * filtered_ir;
+    threshold = signal_min + (signal_max - signal_min) * 0.3; // Midpoint
 }
 
 void calculate_bpm(float filtered_ir, uint32_t current_time) {
     static uint32_t last_beat_time = 0;
-    static float beat_avg = 70.0; // Initialize with a realistic BPM
+    static float beat_avg = 50.0; // Initialize with a realistic BPM
     static float last_value = 0;
     float bpm = 0.0;
-    printf("Threshold: %.1f, Filtered IR: %.1f\n", filtered_ir, threshold);
+    printf("Threshold: %.1f, Filtered IR: %.1f\n", threshold, filtered_ir);
     // Detect rising edge crossing the threshold
     if (filtered_ir > threshold && last_value <= threshold) {
         if (last_beat_time != 0) {
             uint32_t beat_interval = current_time - last_beat_time;
-            if (beat_interval > 400) { // Refractory period = 400ms (max 150 BPM)
+            if (beat_interval > 300) { // Refractory period = 400ms (max 150 BPM)
                 bpm = 60000.0 / beat_interval;
-                printf("bpm: %.1f\n\n\n\n\n\n\n", bpm);
-                beat_avg = 0.7 * beat_avg + 0.3 * bpm; // Smoothing
+                // printf("bpm: %.1f\n\n\n\n\n\n\n", bpm);
+                beat_avg = 0.9 * beat_avg + 0.1 * bpm; // Smoothing
             }
         }
         last_beat_time = current_time;
     }
+    else if (filtered_ir < HB_THRESHOLD && last_value < HB_THRESHOLD){
+        beat_avg = 50.0;
+    }
     last_value = filtered_ir;
-
+    printf("bpm: %.1f ", bpm);
     printf("bpm avg: %.1f\n", beat_avg);
 }
-
-
 
 void initialize_mpu6050() {
     const uint8_t PWR_MGMT_1_REG[1] = {0x6B};  // Power management register address
@@ -227,18 +208,15 @@ void initialize_MAXIM30102() {
     ESP_ERROR_CHECK(i2c_master_transmit(MAX30102_dev_handle, data, 2, 100));
 }
 
-
 void app_main(void) {
     
     // Initialize the I2C master bus and add the MPU-6050 device to it
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &MPU_6050_dev_cfg, &MPU_6050_dev_handle));
-    
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &MAX30102_dev_cfg, &MAX30102_dev_handle));
     
     initialize_mpu6050();
     initialize_MAXIM30102();
-    uint32_t rolling_ir_average  = 0;
     
     for (;;) {
         int16_t accel_x_raw, accel_y_raw, accel_z_raw;
@@ -274,7 +252,7 @@ void app_main(void) {
             printf("Failed to write FIFO register address\n");
             return;
         }
-
+        
         // Step 2: Perform a repeated start condition and read the FIFO data
         uint8_t FIFO_DATA_LEN = MAX30102_FIFO_BURST_SIZE * MAX30102_FIFO_SAMPLE_SIZE; //Burst size * Sample Size, bytes
         uint8_t FIFO_DATA[FIFO_DATA_LEN];  // Buffer to store the FIFO data (6 bytes for one sample)
@@ -282,30 +260,83 @@ void app_main(void) {
             printf("Failed to read FIFO data\n");
             return;
         }
-
+        
         // Step 3: Process the FIFO data
         // The FIFO data contains 3 bytes for the Red channel and 3 bytes for the IR channel
         uint32_t red_value;
         uint32_t ir_value;
-
+        
         uint8_t *sample;
         burst_ir_average = 0;
         uint32_t current_time = 0;  // ms
-        for(int i = 0; i < FIFO_DATA_LEN; i+=6){
+        for(int i = 0; i < FIFO_DATA_LEN; i += 6) {
             sample = &FIFO_DATA[i];
             red_value = (sample[0] << 16) | (sample[1] << 8) | sample[2];
             ir_value = (sample[3] << 16) | (sample[4] << 8) | sample[5];
-            // printf("Red Value: %lu, IR Value: %lu\n", red_value, ir_value);
+            printf("Red Value: %lu, IR Value: %lu\n", red_value, ir_value);
             
             // Filter and update thresholds
             update_filtered_ir(ir_value);
             update_thresholds(filtered_ir);
-            
+
             current_time = esp_timer_get_time() / 1000;
-            // printf("Filtered IR: %.1f\n", filtered_ir);
             // Detect beats
             calculate_bpm(filtered_ir, current_time);
         }
+        
+        
         vTaskDelay(100 / portTICK_PERIOD_MS);  // Short delay before next iteration
+        // update_thresholds(filtered_ir);
+            
     }
+}
+
+typedef enum {
+    WAITING_FOR_FIRST_PEAK,
+    WAITING_FOR_SECOND_PEAK
+} BPMState;
+
+int calculate_bpm2(uint32_t raw_ir) {
+    // Static variables to maintain state between function calls.
+    printf("Current IR value: %ld\n", raw_ir);
+    
+    static BPMState state = WAITING_FOR_FIRST_PEAK;
+    static uint32_t first_peak_time = 0;
+    static uint32_t rolling_max = 0;
+    static uint32_t rolling_max_time = 0;
+    
+    // Get current time in ms using esp_timer_get_time (which returns time in µs)
+    uint32_t current_time = esp_timer_get_time() / 1000;
+    
+    // Update the rolling maximum value if the current raw_ir is higher.
+    if (raw_ir > rolling_max) {
+        rolling_max = raw_ir;
+        rolling_max_time = current_time;
+        printf("max hit %ld\n", raw_ir);
+    }
+    
+    // Check if the rolling maximum has been maintained for at least 400ms.
+    if ((current_time - rolling_max_time) >= 400) {
+        // Committed peak detected.
+        if (state == WAITING_FOR_FIRST_PEAK) {
+            // Save timestamp for the first peak and change state.
+            first_peak_time = rolling_max_time;
+            state = WAITING_FOR_SECOND_PEAK;
+        } else if (state == WAITING_FOR_SECOND_PEAK) {
+            // Calculate period between peaks.
+            uint32_t period = rolling_max_time - first_peak_time;
+            // Reset state for the next measurement cycle.
+            state = WAITING_FOR_FIRST_PEAK;
+            // Reset rolling max for new measurement.
+            rolling_max = 0;
+            // Convert period (ms) to BPM: BPM = 60000 / period.
+            printf("Period ms %ld", period);
+            return (int)(60000.0 / period);
+        }
+        // Reset the rolling maximum for subsequent measurements.
+        rolling_max = 0;
+    }
+    
+    // Not enough data (peak-to-peak interval not available) to compute BPM.
+    return -1;
 }

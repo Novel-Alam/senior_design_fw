@@ -17,5 +17,6 @@
     "files.associations": {
         "cstdint": "c"
     },
-    "idf.portWin": "COM5"
+    "idf.portWin": "COM5",
+    "idf.pythonInstallPath": "C:\\Users\\fergu\\.espressif\\tools\\idf-python\\3.11.2\\python.exe"
 }
