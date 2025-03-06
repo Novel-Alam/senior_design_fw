@@ -1,6 +1,13 @@
 #include "main.h"
 
 
+#define MAX30102_FIFO_SAMPLE_SIZE 6 // 6 Bytes Per "Sample" (Red[0:2]_IR[3:5])
+#define MAX30102_FIFO_BURST_SIZE 16 // 16 Samples
+#define BUFFER_SIZE 100  // Store 100 samples for BPM calculation
+#define HB_THRESHOLD 2500
+#define FILTER_ALPHA 0.5 // Adjust for responsiveness (0.1–0.5)
+
+
 // Configure the I2C master bus
 i2c_master_bus_config_t i2c_mst_config = {
     .clk_source = I2C_CLK_SRC_DEFAULT,  // Use default clock source
@@ -255,6 +262,7 @@ void app_main(void) {
     
     initialize_mpu6050();
     initialize_MAXIM30102();
+    uint32_t rolling_ir_average  = 0;
     
     for (;;) {
         int16_t accel_x_raw, accel_y_raw, accel_z_raw;
