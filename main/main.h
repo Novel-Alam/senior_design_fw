@@ -1,3 +1,4 @@
+#include <string.h>
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -34,3 +35,5 @@
 #define HB_THRESHOLD 2500
 #define FILTER_ALPHA 0.3 // Adjust for responsiveness (0.1–0.5)
 #define BANDPASS_BETA 0.05
+#define NUM_INTERVALS 30
+#define LOWEST_BPM 51.0

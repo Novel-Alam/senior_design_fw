@@ -38,7 +38,7 @@ uint32_t ir_buffer[BUFFER_SIZE];
 uint8_t buffer_index = 0;
 uint32_t burst_ir_average;
 float filtered_ir = 0;
-float signal_min = 1e6, signal_max = 0;
+float signal_min = 7000, signal_max = 0;
 float threshold = 0;
 
 
@@ -49,30 +49,19 @@ void update_filtered_ir(uint32_t raw_ir) {
     last_value = filtered_ir;
 }
 
-// void update_filtered_ir(uint32_t raw_ir) {
-//     static float last_baseline = 0;
-//     static float last_filtered = 0;
-    
-//     // 1. Remove baseline drift (high-pass)
-//     float baseline_ir = BANDPASS_BETA * raw_ir + (1 - BANDPASS_BETA) * last_baseline;
-//     float high_passed = raw_ir - baseline_ir;
-//     last_baseline = baseline_ir;
-    
-//     // 2. Attenuate high-frequency noise (low-pass)
-//     float filtered_ir = FILTER_ALPHA * high_passed + (1 - FILTER_ALPHA) * last_filtered;
-//     last_filtered = filtered_ir;
-// }
-
 void update_thresholds(float filtered_ir) {
     // Track min/max with exponential decay
-    signal_min = 0.95 * signal_min + 0.05 * filtered_ir;
-    signal_max = 0.95 * signal_max + 0.05 * filtered_ir;
-    threshold = signal_min + (signal_max - signal_min) * 0.3; // Midpoint
+    signal_min = 0.9 * signal_min + 0.1 * filtered_ir;
+    signal_max = 0.9 * signal_max + 0.1 * filtered_ir;
+    threshold = signal_min + (signal_max - signal_min) * 0.5; // Midpoint
 }
 
 void calculate_bpm(float filtered_ir, uint32_t current_time) {
     static uint32_t last_beat_time = 0;
-    static float beat_avg = 50.0; // Initialize with a realistic BPM
+    static uint32_t intervals[NUM_INTERVALS] = {0};
+    static int interval_index = 0;
+    static int intervals_collected = 0;
+    static float beat_avg = 53.0; // Initial guess
     static float last_value = 0;
     float bpm = 0.0;
     printf("Threshold: %.1f, Filtered IR: %.1f\n", threshold, filtered_ir);
@@ -80,21 +69,70 @@ void calculate_bpm(float filtered_ir, uint32_t current_time) {
     if (filtered_ir > threshold && last_value <= threshold) {
         if (last_beat_time != 0) {
             uint32_t beat_interval = current_time - last_beat_time;
-            if (beat_interval > 300) { // Refractory period = 400ms (max 150 BPM)
-                bpm = 60000.0 / beat_interval;
-                // printf("bpm: %.1f\n\n\n\n\n\n\n", bpm);
-                beat_avg = 0.9 * beat_avg + 0.1 * bpm; // Smoothing
+            // Only consider intervals longer than a minimum (e.g., 300ms ->)
+            if (beat_interval > 300) {
+                intervals[interval_index] = beat_interval;
+                interval_index = (interval_index + 1) % NUM_INTERVALS;
+                if (intervals_collected < NUM_INTERVALS) {
+                    intervals_collected++;
+                }
+                // Compute average interval
+                uint32_t sum = 0;
+                for (int i = 0; i < intervals_collected; i++) {
+                    sum += intervals[i];
+                }
+                uint32_t avg_interval = sum / intervals_collected;
+                bpm = 60000.0 / avg_interval;
+                // Smooth the BPM calculation
+                beat_avg = 0.9 * beat_avg + 0.1 * bpm;
+                printf("Calculated BPM: %.1f\n", beat_avg);
             }
         }
         last_beat_time = current_time;
     }
     else if (filtered_ir < HB_THRESHOLD && last_value < HB_THRESHOLD){
-        beat_avg = 50.0;
+        intervals_collected = 0;
+        interval_index = 0;
+        last_value = 0;
+        memset(intervals, 0, sizeof(intervals));
+        
+        beat_avg = 53.0;
     }
+    
+    if (beat_avg <= LOWEST_BPM){
+        intervals_collected = 0;
+        interval_index = 0;
+        last_value = 0;
+        memset(intervals, 0, sizeof(intervals));
+        beat_avg = LOWEST_BPM;
+    }
+
     last_value = filtered_ir;
     printf("bpm: %.1f ", bpm);
     printf("bpm avg: %.1f\n", beat_avg);
 }
+    
+// esp_err_t max30102_dma_burst_read(uint8_t *data, size_t length)
+// {
+//     esp_err_t ret;
+//     uint8_t reg_addr = MAX30102_FIFO_REG_ADDR;
+
+//     // Write the FIFO register address.
+//     ret = i2c_master_write_to_device(I2C_MASTER_NUM, MAX30102_I2C_ADDRESS,
+//                                      &reg_addr, 1, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+//     if (ret != ESP_OK) {
+//         ESP_LOGE(TAG, "Failed to write FIFO register address");
+//         return ret;
+//     }
+
+//     // Read the burst of data from the FIFO.
+//     ret = i2c_master_read_from_device(I2C_MASTER_NUM, MAX30102_I2C_ADDRESS,
+//                                       data, length, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+//     if (ret != ESP_OK) {
+//         ESP_LOGE(TAG, "Failed to read FIFO data");
+//     }
+//     return ret;
+// }
 
 void initialize_mpu6050() {
     const uint8_t PWR_MGMT_1_REG[1] = {0x6B};  // Power management register address
