@@ -95,8 +95,7 @@ void calculate_bpm(float filtered_ir, uint32_t current_time) {
         interval_index = 0;
         last_value = 0;
         memset(intervals, 0, sizeof(intervals));
-        
-        beat_avg = 53.0;
+        beat_avg = LOWEST_BPM;
     }
     
     if (beat_avg <= LOWEST_BPM){
